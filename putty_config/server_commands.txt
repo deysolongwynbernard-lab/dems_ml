@@ -1,0 +1,43 @@
+#!/bin/bash
+# DEMS ML Server Commands
+# This file contains the commands to be executed on the server
+
+echo "========================================"
+echo "DEMS ML Prediction System - Server Execution"
+echo "========================================"
+echo "Starting at: $(date)"
+echo ""
+
+# Navigate to project directory
+cd /path/to/dems_ml
+
+# Check if Python environment exists
+if [ ! -d "venv" ]; then
+    echo "Creating Python virtual environment..."
+    python3 -m venv venv
+fi
+
+# Activate virtual environment
+echo "Activating virtual environment..."
+source venv/bin/activate
+
+# Install/update requirements
+echo "Installing/updating requirements..."
+pip install -r python/requirements.txt
+
+# Run the prediction system
+echo "Running DEMS ML prediction system..."
+echo ""
+
+# Run for all locations (default behavior)
+python3 python/run_predictor.py --days 14
+
+echo ""
+echo "========================================"
+echo "DEMS ML execution completed at: $(date)"
+echo "========================================"
+
+# Deactivate virtual environment
+deactivate
+
+echo "Server execution completed successfully!"
