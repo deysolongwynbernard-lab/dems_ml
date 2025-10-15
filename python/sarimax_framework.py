@@ -32,7 +32,7 @@ class SarimaxPredictor:
             SELECT 
                 barangay_name,
                 DATE(date) AS date,
-                SUM(total_evacuess) AS total_evacuess
+                SUM(total_evacuees) AS total_evacuess
             FROM brgy_record_table
             WHERE barangay_name IS NOT NULL
         """
