@@ -808,57 +808,35 @@ class SarimaxPredictor:
             
             # Compare predicted scale to this month's historical scale distribution
             if month_scale_mean is not None and not np.isnan(month_scale_mean):
-                # Use historical scale patterns for this month with more balanced thresholds
-                # Low risk: predicted scale is clearly below historical patterns
-                if predicted_scale <= 3:
+                # Use historical scale patterns for this month
+                if predicted_scale <= 3 or (month_scale_min is not None and predicted_scale <= month_scale_min + 1):
                     return 'Low'
+                elif predicted_scale >= 8 or (month_scale_max is not None and predicted_scale >= month_scale_max - 1):
+                    return 'High'
                 elif month_scale_median is not None and not np.isnan(month_scale_median):
-                    # Compare to median scale for this month - more balanced approach
-                    scale_diff_from_median = predicted_scale - month_scale_median
-                    
-                    # Low: significantly below median (2+ points lower)
-                    if scale_diff_from_median <= -2.0 or predicted_scale <= 3:
+                    # Compare to median scale for this month
+                    if predicted_scale <= month_scale_median - 1.5:
                         return 'Low'
-                    # High: significantly above median AND above a threshold
-                    # Require BOTH conditions: (1) 2+ points above median AND (2) scale >= 8
-                    elif scale_diff_from_median >= 2.0 and predicted_scale >= 8:
-                        # Additional check: also compare to max to ensure it's truly exceptional
-                        if month_scale_max is not None and predicted_scale >= month_scale_max:
-                            return 'High'
-                        # Or if significantly higher than historical max
-                        elif month_scale_max is not None and predicted_scale >= month_scale_max + 1.0:
-                            return 'High'
-                        # Or if scale is 9 or 10 (very severe)
-                        elif predicted_scale >= 9:
-                            return 'High'
-                        else:
-                            return 'Medium'
-                    # High: scale is 9 or 10 regardless (very severe)
-                    elif predicted_scale >= 9:
+                    elif predicted_scale >= month_scale_median + 1.5:
                         return 'High'
-                    # Medium: everything else (including scale 8 that's not significantly above median)
                     else:
                         return 'Medium'
                 else:
-                    # No median available, use mean-based comparison
-                    scale_diff_from_mean = predicted_scale - month_scale_mean
-                    
+                    # Direct scale mapping
                     if predicted_scale <= 3:
                         return 'Low'
-                    elif scale_diff_from_mean >= 2.5 and predicted_scale >= 8:
-                        return 'High'
-                    elif predicted_scale >= 9:
+                    elif predicted_scale >= 8:
                         return 'High'
                     else:
                         return 'Medium'
             else:
-                # No historical scale data, use direct scale mapping with balanced thresholds
+                # No historical scale data, use direct scale mapping
                 if predicted_scale <= 3:
                     return 'Low'
-                elif predicted_scale >= 9:
+                elif predicted_scale >= 8:
                     return 'High'
                 else:
-                    return 'Medium'  # Scale 4-8 default to Medium
+                    return 'Medium'
         
         # Method 2: Use historical relationship between evacuees and scale for this month
         if not month_historical_data.empty and 'scale' in month_historical_data.columns and 'total_evacuess' in month_historical_data.columns:
@@ -883,36 +861,23 @@ class SarimaxPredictor:
                     estimated_scale = forecast_value * scale_ratio
                     estimated_scale = max(1, min(10, round(estimated_scale)))
                     
-                    # Compare to historical scale distribution for this month with balanced thresholds
+                    # Compare to historical scale distribution for this month
                     if month_scale_mean is not None and not np.isnan(month_scale_mean):
-                        if estimated_scale <= 3:
+                        if estimated_scale <= 3 or (month_scale_min is not None and estimated_scale <= month_scale_min + 1):
                             return 'Low'
+                        elif estimated_scale >= 8 or (month_scale_max is not None and estimated_scale >= month_scale_max - 1):
+                            return 'High'
                         elif month_scale_median is not None and not np.isnan(month_scale_median):
-                            # Compare to median scale - more balanced approach
-                            scale_diff = estimated_scale - month_scale_median
-                            
-                            if scale_diff <= -2.0 or estimated_scale <= 3:
+                            if estimated_scale <= month_scale_median - 1.5:
                                 return 'Low'
-                            # High requires: (1) 2+ points above median AND (2) scale >= 8
-                            elif scale_diff >= 2.0 and estimated_scale >= 8:
-                                if month_scale_max is not None and estimated_scale >= month_scale_max + 0.5:
-                                    return 'High'
-                                elif estimated_scale >= 9:
-                                    return 'High'
-                                else:
-                                    return 'Medium'
-                            elif estimated_scale >= 9:
+                            elif estimated_scale >= month_scale_median + 1.5:
                                 return 'High'
                             else:
                                 return 'Medium'
                         else:
-                            # No median, use mean
-                            scale_diff = estimated_scale - month_scale_mean
                             if estimated_scale <= 3:
                                 return 'Low'
-                            elif scale_diff >= 2.5 and estimated_scale >= 8:
-                                return 'High'
-                            elif estimated_scale >= 9:
+                            elif estimated_scale >= 8:
                                 return 'High'
                             else:
                                 return 'Medium'
@@ -931,43 +896,26 @@ class SarimaxPredictor:
                 else:
                     estimated_scale = 8 + min((forecast_ratio - 1.0) / 0.5, 1.0) * 2  # Scale 8-10
                 
-                # Compare to this month's historical scale patterns with balanced thresholds
-                if estimated_scale <= 3:
+                # Compare to this month's historical scale patterns
+                if estimated_scale <= 3 or (month_scale_min is not None and estimated_scale <= month_scale_min + 1):
                     return 'Low'
+                elif estimated_scale >= 8 or (month_scale_max is not None and estimated_scale >= month_scale_max - 1):
+                    return 'High'
                 elif month_scale_median is not None and not np.isnan(month_scale_median):
-                    # Compare to median - more balanced approach
-                    scale_diff = estimated_scale - month_scale_median
-                    
-                    if scale_diff <= -2.0 or estimated_scale <= 3:
+                    if estimated_scale <= month_scale_median - 1.5:
                         return 'Low'
-                    # High requires: significantly above median (2+ points) AND scale >= 8
-                    elif scale_diff >= 2.0 and estimated_scale >= 8:
-                        if month_scale_max is not None and estimated_scale >= month_scale_max + 0.5:
-                            return 'High'
-                        elif estimated_scale >= 9:
-                            return 'High'
-                        else:
-                            return 'Medium'
-                    elif estimated_scale >= 9:
+                    elif estimated_scale >= month_scale_median + 1.5:
                         return 'High'
                     else:
                         return 'Medium'
                 else:
-                    # No median, use mean or direct mapping
-                    if estimated_scale <= 3:
-                        return 'Low'
-                    elif estimated_scale >= 9:
-                        return 'High'
-                    else:
-                        return 'Medium'
+                    return 'Medium'
             else:
-                # Use scale mean directly for this month with balanced thresholds
+                # Use scale mean directly for this month
                 if month_scale_mean <= 3:
                     return 'Low'
-                elif month_scale_mean >= 9:
-                    return 'High'
                 elif month_scale_mean >= 8:
-                    return 'Medium'  # Scale 8 default to Medium
+                    return 'High'
                 else:
                     return 'Medium'
         
@@ -983,22 +931,14 @@ class SarimaxPredictor:
                 return 'High'
         
         # Use percentile-based categorization for this specific month
-        # More balanced thresholds to prevent all High risk - make High conditions more stringent
         is_low = (forecast_value <= month_25th or 
                  forecast_value <= (month_historical_median - 0.5 * month_historical_std) or
-                 forecast_value <= month_historical_mean * 0.6)  # Slightly more lenient for Low
+                 forecast_value <= month_historical_mean * 0.4)
         
-        # High risk requires VERY stringent conditions - all must be significantly above historical patterns
-        # Require MULTIPLE conditions to be met for High risk (using AND logic)
-        is_high = (
-            # Condition 1: Must be above 90th percentile AND above mean by 2x
-            (forecast_value >= month_90th * 1.2 and forecast_value >= month_historical_mean * 2.0) or
-            # Condition 2: Must be significantly above median (2+ std dev) AND above 75th percentile
-            (forecast_value >= (month_historical_median + 2.0 * month_historical_std) and 
-             forecast_value >= month_75th * 1.5) or
-            # Condition 3: Must be at least 2.5x the mean (very extreme)
-            forecast_value >= month_historical_mean * 2.5
-        )
+        is_high = (forecast_value >= month_90th or 
+                  forecast_value >= (month_historical_median + 1.0 * month_historical_std) or
+                  forecast_value >= month_historical_mean * 1.6 or
+                  forecast_value >= month_75th * 1.3)
         
         if is_low:
             return 'Low'
