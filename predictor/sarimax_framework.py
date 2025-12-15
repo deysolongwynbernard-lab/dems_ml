@@ -526,30 +526,32 @@ class SarimaxPredictor:
                     # Filter historical data for this specific month from brgy_record_table
                     month_historical_data = self.data[self.data['date'].dt.month == forecast_month]
                     
-                    # If no data for this specific month, try to use the closest available month's data
-                    # This handles cases where historical data only exists for certain months (e.g., only September)
-                    if month_historical_data.empty or len(month_historical_data) == 0:
-                        # Find the closest month with data (check previous months first, then next months)
-                        available_months = sorted(self.data['date'].dt.month.unique())
-                        if len(available_months) > 0:
-                            # Find closest month
-                            closest_month = None
-                            min_diff = 12
-                            for avail_month in available_months:
-                                # Calculate circular difference (e.g., Oct(10) to Sep(9) = 1, Oct(10) to Jan(1) = 3)
-                                diff = min(abs(forecast_month - avail_month), 
-                                          12 - abs(forecast_month - avail_month))
-                                if diff < min_diff:
-                                    min_diff = diff
-                                    closest_month = avail_month
-                            
-                            if closest_month is not None:
-                                # Use the closest month's data as proxy
-                                month_historical_data = self.data[self.data['date'].dt.month == closest_month]
-                                print(f"⚠️ No historical data for {month_name} {year}, using {pd.Timestamp(2000, closest_month, 1).strftime('%B')} data as proxy (difference: {min_diff} months)")
+                    # Track if we have actual data for this specific month (not proxy)
+                    has_actual_month_data = not month_historical_data.empty and len(month_historical_data) > 0
                     
-                    # Calculate month-specific historical statistics from brgy_record_table
-                    if not month_historical_data.empty and len(month_historical_data) > 0:
+                    # If no data for this specific month, mark as Low risk (don't use proxy data)
+                    if not has_actual_month_data:
+                        print(f"ℹ️ No historical data for {month_name} {year}, marking as Low risk")
+                        # Set risk level to Low and use minimal statistics
+                        risk_level = 'Low'
+                        month_historical_mean = 0
+                        month_historical_median = 0
+                        month_historical_max = 0
+                        month_historical_min = 0
+                        month_historical_std = 0
+                        month_25th = 0
+                        month_75th = 0
+                        month_90th = 0
+                        month_scale_mean = None
+                        month_scale_median = None
+                        month_scale_max = None
+                        month_scale_min = None
+                        month_population = None
+                        # Keep month_historical_data as empty DataFrame
+                        month_historical_data = pd.DataFrame()
+                    else:
+                        # We have actual data for this month, proceed with normal processing
+                        # Calculate month-specific historical statistics from brgy_record_table
                         month_values = month_historical_data['total_evacuess'].values
                         month_historical_mean = np.mean(month_values)
                         month_historical_median = np.median(month_values)
@@ -577,71 +579,41 @@ class SarimaxPredictor:
                                 month_scale_mean = month_scale_median = month_scale_max = month_scale_min = None
                         else:
                             month_scale_mean = month_scale_median = month_scale_max = month_scale_min = None
-                    else:
-                        # Fallback to overall statistics if no data for this month
-                        overall_values = self.data['total_evacuess'].values if not self.data['total_evacuess'].empty else np.array([100])
-                        month_historical_mean = overall_historical_mean
-                        month_historical_median = np.median(overall_values)
-                        month_historical_max = overall_historical_max
-                        month_historical_min = np.min(overall_values) if len(overall_values) > 0 else 0
-                        month_historical_std = np.std(overall_values) if len(overall_values) > 0 else overall_historical_mean * 0.3
-                        month_25th = np.percentile(overall_values, 25) if len(overall_values) > 0 else overall_historical_mean * 0.5
-                        month_75th = np.percentile(overall_values, 75) if len(overall_values) > 0 else overall_historical_mean * 1.2
-                        month_90th = np.percentile(overall_values, 90) if len(overall_values) > 0 else overall_historical_mean * 1.5
                         
-                        # Get overall scale values from brgy_record_table
-                        overall_scales = self.data['scale'].values if 'scale' in self.data.columns else None
-                        if overall_scales is not None and len(overall_scales) > 0:
-                            overall_scales = pd.to_numeric(overall_scales, errors='coerce')
-                            overall_scales = overall_scales[~pd.isna(overall_scales)]
-                            if len(overall_scales) > 0:
-                                month_scale_mean = np.mean(overall_scales)
-                                month_scale_median = np.median(overall_scales)
-                                month_scale_max = np.max(overall_scales)
-                                month_scale_min = np.min(overall_scales)
-                            else:
-                                month_scale_mean = month_scale_median = month_scale_max = month_scale_min = None
-                        else:
-                            month_scale_mean = month_scale_median = month_scale_max = month_scale_min = None
-                    
-                    # Categorize risk level based on forecast value and historical scale data from brgy_record_table for this month
-                    # Get population data if available for scale calculation
-                    month_population = None
-                    if not month_historical_data.empty and 'total_population' in month_historical_data.columns:
-                        month_populations = month_historical_data['total_population'].values
-                        month_populations = pd.to_numeric(month_populations, errors='coerce')
-                        month_populations = month_populations[~pd.isna(month_populations)]
-                        if len(month_populations) > 0:
-                            month_population = np.mean(month_populations)
-                    elif not self.data.empty and 'total_population' in self.data.columns:
-                        # Fallback to overall population
-                        overall_populations = self.data['total_population'].values
-                        overall_populations = pd.to_numeric(overall_populations, errors='coerce')
-                        overall_populations = overall_populations[~pd.isna(overall_populations)]
-                        if len(overall_populations) > 0:
-                            month_population = np.mean(overall_populations)
-                    
-                    # Ensure month_historical_data is a DataFrame (even if empty)
-                    if month_historical_data.empty:
-                        month_historical_data = pd.DataFrame()
-                    
-                    risk_level = self._categorize_risk_by_month_historical_scale(
-                        month_forecast_mean,
-                        month_historical_data,
-                        month_historical_mean,
-                        month_historical_median,
-                        month_historical_max,
-                        month_historical_min,
-                        month_historical_std,
-                        month_25th,
-                        month_75th,
-                        month_90th,
-                        month_scale_mean,
-                        month_scale_median,
-                        month_scale_max,
-                        month_scale_min,
-                        month_population
-                    )
+                        # Get population data if available for scale calculation
+                        month_population = None
+                        if 'total_population' in month_historical_data.columns:
+                            month_populations = month_historical_data['total_population'].values
+                            month_populations = pd.to_numeric(month_populations, errors='coerce')
+                            month_populations = month_populations[~pd.isna(month_populations)]
+                            if len(month_populations) > 0:
+                                month_population = np.mean(month_populations)
+                        elif not self.data.empty and 'total_population' in self.data.columns:
+                            # Fallback to overall population
+                            overall_populations = self.data['total_population'].values
+                            overall_populations = pd.to_numeric(overall_populations, errors='coerce')
+                            overall_populations = overall_populations[~pd.isna(overall_populations)]
+                            if len(overall_populations) > 0:
+                                month_population = np.mean(overall_populations)
+                        
+                        # Categorize risk level based on forecast value and historical scale data from brgy_record_table for this month
+                        risk_level = self._categorize_risk_by_month_historical_scale(
+                            month_forecast_mean,
+                            month_historical_data,
+                            month_historical_mean,
+                            month_historical_median,
+                            month_historical_max,
+                            month_historical_min,
+                            month_historical_std,
+                            month_25th,
+                            month_75th,
+                            month_90th,
+                            month_scale_mean,
+                            month_scale_median,
+                            month_scale_max,
+                            month_scale_min,
+                            month_population
+                        )
                     
                     monthly_forecasts.append({
                         'date': forecast_date,
@@ -807,35 +779,58 @@ class SarimaxPredictor:
             predicted_scale = self._calculate_scale_from_evacuation_percentage(forecast_value, month_population)
             
             # Compare predicted scale to this month's historical scale distribution
+            # Use historical scale patterns to normalize the risk assessment
             if month_scale_mean is not None and not np.isnan(month_scale_mean):
-                # Use historical scale patterns for this month
-                if predicted_scale <= 3 or (month_scale_min is not None and predicted_scale <= month_scale_min + 1):
-                    return 'Low'
-                elif predicted_scale >= 8 or (month_scale_max is not None and predicted_scale >= month_scale_max - 1):
-                    return 'High'
-                elif month_scale_median is not None and not np.isnan(month_scale_median):
-                    # Compare to median scale for this month
-                    if predicted_scale <= month_scale_median - 1.5:
-                        return 'Low'
-                    elif predicted_scale >= month_scale_median + 1.5:
-                        return 'High'
+                # Use historical scale as the primary reference
+                # If historical scale is typically medium (4-7), default to Medium unless extreme
+                if month_scale_median is not None and not np.isnan(month_scale_median):
+                    # Use median as reference point
+                    # If historical median is in medium range (4-7), be more lenient
+                    if 4 <= month_scale_median <= 7:
+                        # Historical is medium - only mark as High if predicted is 9-10
+                        # Only mark as Low if predicted is 1-2
+                        if predicted_scale <= 2:
+                            return 'Low'
+                        elif predicted_scale >= 9:
+                            return 'High'
+                        else:
+                            # Default to Medium for most cases when historical is medium
+                            return 'Medium'
                     else:
-                        return 'Medium'
+                        # Historical is low (1-3) or high (8-10) - use relative comparison
+                        scale_diff = predicted_scale - month_scale_median
+                        if scale_diff <= -2:
+                            return 'Low'
+                        elif scale_diff >= 3 and predicted_scale >= 9:
+                            return 'High'
+                        else:
+                            return 'Medium'
                 else:
-                    # Direct scale mapping
-                    if predicted_scale <= 3:
-                        return 'Low'
-                    elif predicted_scale >= 8:
-                        return 'High'
+                    # Use mean as reference
+                    if 4 <= month_scale_mean <= 7:
+                        # Historical is medium - be lenient
+                        if predicted_scale <= 2:
+                            return 'Low'
+                        elif predicted_scale >= 9:
+                            return 'High'
+                        else:
+                            return 'Medium'
                     else:
-                        return 'Medium'
+                        scale_diff = predicted_scale - month_scale_mean
+                        if scale_diff <= -2:
+                            return 'Low'
+                        elif scale_diff >= 3 and predicted_scale >= 9:
+                            return 'High'
+                        else:
+                            return 'Medium'
             else:
-                # No historical scale data, use direct scale mapping
+                # No historical scale data, use direct scale mapping but favor Medium
                 if predicted_scale <= 3:
                     return 'Low'
-                elif predicted_scale >= 8:
+                elif predicted_scale >= 9:
                     return 'High'
                 else:
+                    # Scale 4-8: Default to Medium
                     return 'Medium'
         
         # Method 2: Use historical relationship between evacuees and scale for this month
@@ -862,25 +857,51 @@ class SarimaxPredictor:
                     estimated_scale = max(1, min(10, round(estimated_scale)))
                     
                     # Compare to historical scale distribution for this month
+                    # Use historical scale patterns to normalize the risk assessment
                     if month_scale_mean is not None and not np.isnan(month_scale_mean):
-                        if estimated_scale <= 3 or (month_scale_min is not None and estimated_scale <= month_scale_min + 1):
-                            return 'Low'
-                        elif estimated_scale >= 8 or (month_scale_max is not None and estimated_scale >= month_scale_max - 1):
-                            return 'High'
-                        elif month_scale_median is not None and not np.isnan(month_scale_median):
-                            if estimated_scale <= month_scale_median - 1.5:
-                                return 'Low'
-                            elif estimated_scale >= month_scale_median + 1.5:
-                                return 'High'
+                        # Compare estimated scale to historical scale for this month
+                        if month_scale_median is not None and not np.isnan(month_scale_median):
+                            # If historical median is in medium range (4-7), be more lenient
+                            if 4 <= month_scale_median <= 7:
+                                if estimated_scale <= 2:
+                                    return 'Low'
+                                elif estimated_scale >= 9:
+                                    return 'High'
+                                else:
+                                    return 'Medium'
                             else:
-                                return 'Medium'
+                                scale_diff = estimated_scale - month_scale_median
+                                if scale_diff <= -2:
+                                    return 'Low'
+                                elif scale_diff >= 3 and estimated_scale >= 9:
+                                    return 'High'
+                                else:
+                                    return 'Medium'
                         else:
-                            if estimated_scale <= 3:
-                                return 'Low'
-                            elif estimated_scale >= 8:
-                                return 'High'
+                            if 4 <= month_scale_mean <= 7:
+                                if estimated_scale <= 2:
+                                    return 'Low'
+                                elif estimated_scale >= 9:
+                                    return 'High'
+                                else:
+                                    return 'Medium'
                             else:
-                                return 'Medium'
+                                scale_diff = estimated_scale - month_scale_mean
+                                if scale_diff <= -2:
+                                    return 'Low'
+                                elif scale_diff >= 3 and estimated_scale >= 9:
+                                    return 'High'
+                                else:
+                                    return 'Medium'
+                    else:
+                        # No historical scale data, use direct scale mapping but favor Medium
+                        if estimated_scale <= 3:
+                            return 'Low'
+                        elif estimated_scale >= 9:
+                            return 'High'
+                        else:
+                            # Scale 4-8: Default to Medium
+                            return 'Medium'
         
         # Method 3: Fallback to scale-based categorization if available
         if month_scale_mean is not None and not np.isnan(month_scale_mean):
@@ -897,54 +918,80 @@ class SarimaxPredictor:
                     estimated_scale = 8 + min((forecast_ratio - 1.0) / 0.5, 1.0) * 2  # Scale 8-10
                 
                 # Compare to this month's historical scale patterns
-                if estimated_scale <= 3 or (month_scale_min is not None and estimated_scale <= month_scale_min + 1):
-                    return 'Low'
-                elif estimated_scale >= 8 or (month_scale_max is not None and estimated_scale >= month_scale_max - 1):
-                    return 'High'
-                elif month_scale_median is not None and not np.isnan(month_scale_median):
-                    if estimated_scale <= month_scale_median - 1.5:
-                        return 'Low'
-                    elif estimated_scale >= month_scale_median + 1.5:
-                        return 'High'
+                # Use historical scale patterns to normalize the risk assessment
+                if month_scale_median is not None and not np.isnan(month_scale_median):
+                    # If historical median is in medium range (4-7), be more lenient
+                    if 4 <= month_scale_median <= 7:
+                        if estimated_scale <= 2:
+                            return 'Low'
+                        elif estimated_scale >= 9:
+                            return 'High'
+                        else:
+                            return 'Medium'
                     else:
-                        return 'Medium'
+                        scale_diff = estimated_scale - month_scale_median
+                        if scale_diff <= -2:
+                            return 'Low'
+                        elif scale_diff >= 3 and estimated_scale >= 9:
+                            return 'High'
+                        else:
+                            return 'Medium'
                 else:
-                    return 'Medium'
+                    # Compare to mean
+                    if 4 <= month_scale_mean <= 7:
+                        if estimated_scale <= 2:
+                            return 'Low'
+                        elif estimated_scale >= 9:
+                            return 'High'
+                        else:
+                            return 'Medium'
+                    else:
+                        scale_diff = estimated_scale - month_scale_mean
+                        if scale_diff <= -2:
+                            return 'Low'
+                        elif scale_diff >= 3 and estimated_scale >= 9:
+                            return 'High'
+                        else:
+                            return 'Medium'
             else:
                 # Use scale mean directly for this month
+                # If historical mean is in medium range (4-7), default to Medium
                 if month_scale_mean <= 3:
                     return 'Low'
-                elif month_scale_mean >= 8:
+                elif month_scale_mean >= 9:
                     return 'High'
                 else:
+                    # Historical mean is 4-8, default to Medium
                     return 'Medium'
         
         # Method 4: Fallback to evacuation-based categorization using this month's percentiles
+        # Default to Medium risk for most cases
         if month_historical_mean == 0:
             if forecast_value == 0:
                 return 'Low'
-            elif forecast_value <= month_historical_max * 0.3:
-                return 'Low'
-            elif forecast_value <= month_historical_max * 0.7:
-                return 'Medium'
             else:
-                return 'High'
+                # Default to Medium if no historical data
+                return 'Medium'
         
         # Use percentile-based categorization for this specific month
+        # Default to Medium, only mark as High if truly exceptional
+        # Low: Below 25th percentile OR significantly below median/mean
         is_low = (forecast_value <= month_25th or 
                  forecast_value <= (month_historical_median - 0.5 * month_historical_std) or
-                 forecast_value <= month_historical_mean * 0.4)
+                 forecast_value <= month_historical_mean * 0.5)
         
-        is_high = (forecast_value >= month_90th or 
-                  forecast_value >= (month_historical_median + 1.0 * month_historical_std) or
-                  forecast_value >= month_historical_mean * 1.6 or
-                  forecast_value >= month_75th * 1.3)
+        # High: Only if significantly above 90th percentile AND well above mean (very strict)
+        # Require forecast to be at least 3x the mean AND above 90th percentile
+        is_high = (forecast_value >= month_90th and 
+                  forecast_value >= (month_historical_median + 2.5 * month_historical_std) and
+                  forecast_value >= month_historical_mean * 3.0)
         
         if is_low:
             return 'Low'
         elif is_high:
             return 'High'
         else:
+            # Default to Medium for most cases (this should catch most forecasts)
             return 'Medium'
     
     def _categorize_risk_by_scale_and_month(self, forecast_value, month_historical_mean, month_historical_median,
@@ -1088,29 +1135,33 @@ class SarimaxPredictor:
                 # Filter historical data for this specific month
                 month_historical_data = self.data[self.data['date'].dt.month == forecast_month]
                 
-                # If no data for this specific month, try to use the closest available month's data
-                if month_historical_data.empty or len(month_historical_data) == 0:
-                    # Find the closest month with data
-                    available_months = sorted(self.data['date'].dt.month.unique())
-                    if len(available_months) > 0:
-                        # Find closest month
-                        closest_month = None
-                        min_diff = 12
-                        for avail_month in available_months:
-                            # Calculate circular difference
-                            diff = min(abs(forecast_month - avail_month), 
-                                      12 - abs(forecast_month - avail_month))
-                            if diff < min_diff:
-                                min_diff = diff
-                                closest_month = avail_month
-                        
-                        if closest_month is not None:
-                            # Use the closest month's data as proxy
-                            month_historical_data = self.data[self.data['date'].dt.month == closest_month]
-                            print(f"⚠️ [Fallback] No historical data for {month_name} {year}, using {pd.Timestamp(2000, closest_month, 1).strftime('%B')} data as proxy")
+                # Track if we have actual data for this specific month (not proxy)
+                has_actual_month_data = not month_historical_data.empty and len(month_historical_data) > 0
                 
-                # Calculate month-specific historical statistics from brgy_record_table
-                if not month_historical_data.empty and len(month_historical_data) > 0:
+                # If no data for this specific month, mark as Low risk (don't use proxy data)
+                if not has_actual_month_data:
+                    print(f"ℹ️ [Fallback] No historical data for {month_name} {year}, marking as Low risk")
+                    # Set risk level to Low and use minimal statistics
+                    risk_level = 'Low'
+                    forecast_value = 0
+                    month_historical_mean = 0
+                    month_historical_median = 0
+                    month_historical_max = 0
+                    month_historical_min = 0
+                    month_historical_std = 0
+                    month_25th = 0
+                    month_75th = 0
+                    month_90th = 0
+                    month_scale_mean = None
+                    month_scale_median = None
+                    month_scale_max = None
+                    month_scale_min = None
+                    month_population = None
+                    # Keep month_historical_data as empty DataFrame
+                    month_historical_data = pd.DataFrame()
+                else:
+                    # We have actual data for this month, proceed with normal processing
+                    # Calculate month-specific historical statistics from brgy_record_table
                     month_values = month_historical_data['total_evacuess'].values
                     month_historical_mean = np.mean(month_values)
                     month_historical_median = np.median(month_values)
@@ -1135,74 +1186,44 @@ class SarimaxPredictor:
                             month_scale_mean = month_scale_median = month_scale_max = month_scale_min = None
                     else:
                         month_scale_mean = month_scale_median = month_scale_max = month_scale_min = None
-                else:
-                    # Fallback to overall statistics if no data for this month
-                    overall_values = self.data['total_evacuess'].values if not self.data['total_evacuess'].empty else np.array([100])
-                    month_historical_mean = overall_historical_mean
-                    month_historical_median = np.median(overall_values) if len(overall_values) > 0 else overall_historical_mean
-                    month_historical_max = np.max(overall_values) if len(overall_values) > 0 else overall_historical_mean * 2
-                    month_historical_min = np.min(overall_values) if len(overall_values) > 0 else 0
-                    month_historical_std = np.std(overall_values) if len(overall_values) > 0 else overall_historical_mean * 0.3
-                    month_25th = np.percentile(overall_values, 25) if len(overall_values) > 0 else overall_historical_mean * 0.5
-                    month_75th = np.percentile(overall_values, 75) if len(overall_values) > 0 else overall_historical_mean * 1.2
-                    month_90th = np.percentile(overall_values, 90) if len(overall_values) > 0 else overall_historical_mean * 1.5
                     
-                    # Get overall scale values from brgy_record_table
-                    overall_scales = self.data['scale'].values if 'scale' in self.data.columns else None
-                    if overall_scales is not None and len(overall_scales) > 0:
-                        overall_scales = pd.to_numeric(overall_scales, errors='coerce')
-                        overall_scales = overall_scales[~pd.isna(overall_scales)]
-                        if len(overall_scales) > 0:
-                            month_scale_mean = np.mean(overall_scales)
-                            month_scale_median = np.median(overall_scales)
-                            month_scale_max = np.max(overall_scales)
-                            month_scale_min = np.min(overall_scales)
-                        else:
-                            month_scale_mean = month_scale_median = month_scale_max = month_scale_min = None
-                    else:
-                        month_scale_mean = month_scale_median = month_scale_max = month_scale_min = None
-                
-                # Simple forecast based on historical mean for this month
-                forecast_value = month_historical_mean
-                
-                # Get population data if available for scale calculation
-                month_population = None
-                if not month_historical_data.empty and 'total_population' in month_historical_data.columns:
-                    month_populations = month_historical_data['total_population'].values
-                    month_populations = pd.to_numeric(month_populations, errors='coerce')
-                    month_populations = month_populations[~pd.isna(month_populations)]
-                    if len(month_populations) > 0:
-                        month_population = np.mean(month_populations)
-                elif not self.data.empty and 'total_population' in self.data.columns:
-                    # Fallback to overall population
-                    overall_populations = self.data['total_population'].values
-                    overall_populations = pd.to_numeric(overall_populations, errors='coerce')
-                    overall_populations = overall_populations[~pd.isna(overall_populations)]
-                    if len(overall_populations) > 0:
-                        month_population = np.mean(overall_populations)
-                
-                # Ensure month_historical_data is a DataFrame (even if empty)
-                if month_historical_data.empty:
-                    month_historical_data = pd.DataFrame()
-                
-                # Categorize risk level based on historical scale data from brgy_record_table for this month
-                risk_level = self._categorize_risk_by_month_historical_scale(
-                    forecast_value,
-                    month_historical_data,
-                    month_historical_mean,
-                    month_historical_median,
-                    month_historical_max,
-                    month_historical_min,
-                    month_historical_std,
-                    month_25th,
-                    month_75th,
-                    month_90th,
-                    month_scale_mean,
-                    month_scale_median,
-                    month_scale_max,
-                    month_scale_min,
-                    month_population
-                )
+                    # Simple forecast based on historical mean for this month
+                    forecast_value = month_historical_mean
+                    
+                    # Get population data if available for scale calculation
+                    month_population = None
+                    if 'total_population' in month_historical_data.columns:
+                        month_populations = month_historical_data['total_population'].values
+                        month_populations = pd.to_numeric(month_populations, errors='coerce')
+                        month_populations = month_populations[~pd.isna(month_populations)]
+                        if len(month_populations) > 0:
+                            month_population = np.mean(month_populations)
+                    elif not self.data.empty and 'total_population' in self.data.columns:
+                        # Fallback to overall population
+                        overall_populations = self.data['total_population'].values
+                        overall_populations = pd.to_numeric(overall_populations, errors='coerce')
+                        overall_populations = overall_populations[~pd.isna(overall_populations)]
+                        if len(overall_populations) > 0:
+                            month_population = np.mean(overall_populations)
+                    
+                    # Categorize risk level based on historical scale data from brgy_record_table for this month
+                    risk_level = self._categorize_risk_by_month_historical_scale(
+                        forecast_value,
+                        month_historical_data,
+                        month_historical_mean,
+                        month_historical_median,
+                        month_historical_max,
+                        month_historical_min,
+                        month_historical_std,
+                        month_25th,
+                        month_75th,
+                        month_90th,
+                        month_scale_mean,
+                        month_scale_median,
+                        month_scale_max,
+                        month_scale_min,
+                        month_population
+                    )
                 
                 monthly_forecasts.append({
                     'date': forecast_date,
